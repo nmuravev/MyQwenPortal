@@ -42,7 +42,7 @@ PINS = json.loads(st.secrets.get("PINS", "{}"))
 
 GREETINGS = {
     "Николай": "Привет! На связи.",
-    "Малыха": "Малыха, о чём сегодня споём, родная? 🎤️"
+    "Малыха": "Малыха, о чём сегодня споём, родная? 🎤🕊️"
 }
 
 # ========== СКРЫТЫЕ КОНТЕКСТЫ ==========
@@ -81,14 +81,24 @@ def transcribe_audio(audio_file):
     except Exception as e:
         return f"❌ Ошибка расшифровки: {str(e)}"
 
-def save_message_to_db(role, content, author, attachments=None):
+def save_message_to_db(role, content, author, has_image=False, has_video=False, has_audio=False, image_base64=None, audio_transcription=None):
+    """Сохраняет сообщение в Firestore (упрощённая версия)"""
     doc = {
         "role": role,
         "content": content,
         "author": author,
         "timestamp": firestore.SERVER_TIMESTAMP,
-        "attachments": attachments or []
+        "has_image": has_image,
+        "has_video": has_video,
+        "has_audio": has_audio,
     }
+    
+    # Добавляем только простые типы данных
+    if image_base64:
+        doc["image_base64"] = image_base64
+    if audio_transcription:
+        doc["audio_transcription"] = audio_transcription
+    
     db.collection("messages").add(doc)
 
 def get_messages_from_db(limit=50):
@@ -127,9 +137,9 @@ if not st.session_state.logged_in:
         else:
             st.error("❌ Неверный пинкод")
     
-    st.stop()  # ВАЖНО: останавливаем выполнение здесь
+    st.stop()
 
-# ========== ОСНОВНОЙ ИНТЕРФЕЙС (только после входа) ==========
+# ========== ОСНОВНОЙ ИНТЕРФЕЙС ==========
 st.set_page_config(page_title="Чат для друзей", page_icon="💬", layout="wide")
 user_role = st.session_state.user_role
 is_admin = (user_role == "Николай")
@@ -144,7 +154,7 @@ with st.sidebar:
     st.divider()
     
     st.markdown("### 📤 Загрузка медиа")
-    st.info("🖼️ Фото, 🎥 Видео, 🎤 Аудио")
+    st.info("🖼️ Фото, 🎥 Видео,  Аудио")
     st.divider()
     
     if st.button("🚪 Выйти", use_container_width=True):
@@ -166,20 +176,28 @@ messages = get_messages_from_db()
 # Отображение истории
 for msg in messages:
     with st.chat_message(msg["role"]):
-        if msg.get("attachments"):
-            for att in msg["attachments"]:
-                if att["type"] == "image":
-                    st.image(att["data"], use_container_width=True)
-                elif att["type"] == "video":
-                    st.video(att["data"])
-                elif att["type"] == "audio":
-                    st.audio(att["data"])
-                    if "transcription" in att:
-                        st.caption(f" {att['transcription']}")
+        # Показываем изображения если есть
+        if msg.get("has_image") and msg.get("image_base64"):
+            try:
+                img_data = base64.b64decode(msg["image_base64"])
+                st.image(img_data, use_container_width=True)
+            except:
+                st.caption("🖼️ Изображение")
         
+        # Показываем видео если есть
+        if msg.get("has_video"):
+            st.caption("🎥 Видео загружено")
+        
+        # Показываем аудио если есть
+        if msg.get("has_audio"):
+            st.caption("🎤 Аудио загружено")
+            if msg.get("audio_transcription"):
+                st.caption(f"📝 {msg['audio_transcription']}")
+        
+        # Показываем текст
         if msg.get("content"):
             if msg["role"] == "user":
-                st.caption(f"️ {msg['author']}")
+                st.caption(f"✍️ {msg['author']}")
             st.markdown(msg["content"])
 
 # Поле ввода
@@ -193,24 +211,28 @@ uploaded_files = st.sidebar.file_uploader(
 )
 
 # Обработка отправки
-def process_and_respond(user_text, attachments=None):
-    save_message_to_db("user", user_text, user_role, attachments)
+def process_and_respond(user_text, has_image=False, has_video=False, has_audio=False, image_base64=None, audio_transcription=None):
+    """Сохраняет сообщение пользователя и генерирует ответ ИИ"""
+    save_message_to_db("user", user_text, user_role, has_image, has_video, has_audio, image_base64, audio_transcription)
     
     system_prompt = CONTEXTS[user_role]
     recent_msgs = get_messages_from_db(limit=15)
     messages_for_api = [{"role": "system", "content": system_prompt}]
     
     for m in recent_msgs:
-        if m["role"] == "user" and m.get("attachments"):
-            content_parts = [{"type": "text", "text": m.get("content", "")}]
-            for att in m["attachments"]:
-                if att["type"] == "image" and "base64" in att:
-                    content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{att['base64']}"}})
-            messages_for_api.append({"role": m["role"], "content": content_parts})
-        else:
-            messages_for_api.append({"role": m["role"], "content": m.get("content", "")})
+        content = m.get("content", "")
+        
+        # Добавляем информацию о медиа в текст
+        if m.get("has_image"):
+            content += " [Пользователь загрузил изображение]"
+        if m.get("has_video"):
+            content += " [Пользователь загрузил видео]"
+        if m.get("has_audio") and m.get("audio_transcription"):
+            content += f" [Аудио: {m.get('audio_transcription', '')}]"
+        
+        messages_for_api.append({"role": m["role"], "content": content})
 
-    model_to_use = VISION_MODEL if any("attachments" in m and any(a["type"]=="image" for a in m.get("attachments",[])) for m in recent_msgs[-3:]) else TEXT_MODEL
+    model_to_use = VISION_MODEL if has_image else TEXT_MODEL
     
     try:
         stream = client_qwen.chat.completions.create(
@@ -233,29 +255,36 @@ def process_and_respond(user_text, attachments=None):
 # Если загружены файлы
 if uploaded_files:
     full_text = ""
-    attachments = []
+    has_image = False
+    has_video = False
+    has_audio = False
+    image_b64 = None
+    audio_trans = None
+    
     for uploaded_file in uploaded_files:
         file_type = uploaded_file.type.split('/')[0]
         file_ext = Path(uploaded_file.name).suffix.lower()
+        
         with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as tmp_file:
             tmp_file.write(uploaded_file.read())
             tmp_path = tmp_file.name
         
         if file_type == 'image':
-            b64 = encode_image(tmp_path)
+            image_b64 = encode_image(tmp_path)
             full_text += f"[Фото: {uploaded_file.name}] "
-            attachments.append({"type": "image", "data": tmp_path, "base64": b64})
+            has_image = True
         elif file_type == 'video':
             full_text += f"[Видео: {uploaded_file.name}] "
-            attachments.append({"type": "video", "data": tmp_path})
+            has_video = True
         elif file_type == 'audio':
             with st.spinner("🎤 Расшифровываю аудио..."):
-                trans = transcribe_audio(uploaded_file)
-            full_text += f"[Аудио: {uploaded_file.name}]\n {trans} "
-            attachments.append({"type": "audio", "data": tmp_path, "transcription": trans})
+                audio_trans = transcribe_audio(uploaded_file)
+            full_text += f"[Аудио: {uploaded_file.name}]\n{audio_trans} "
+            has_audio = True
+        
         os.unlink(tmp_path)
     
-    process_and_respond(full_text.strip(), attachments)
+    process_and_respond(full_text.strip(), has_image, has_video, has_audio, image_b64, audio_trans)
     st.rerun()
 
 # Если введен текст
