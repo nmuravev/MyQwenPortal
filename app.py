@@ -14,7 +14,7 @@ import time
 def init_firebase():
     cred_dict = json.loads(st.secrets.get("FIREBASE_CREDENTIALS", "{}"))
     if not cred_dict:
-        st.error("❌ FIREBASE_CREDENTIALS не найдены в Secrets!")
+        st.error("❌ Ошибка: FIREBASE_CREDENTIALS не найдены в Secrets!")
         st.stop()
     cred = credentials.Certificate(cred_dict)
     if not firebase_admin._apps:
@@ -42,7 +42,7 @@ PINS = json.loads(st.secrets.get("PINS", "{}"))
 
 GREETINGS = {
     "Николай": "Привет! На связи.",
-    "Малыха": "Малыха, о чём сегодня споём, родная? 🎤🕊️"
+    "Малыха": "Малыха, о чём сегодня споём, родная? 🎤️"
 }
 
 # ========== СКРЫТЫЕ КОНТЕКСТЫ ==========
@@ -75,9 +75,7 @@ def transcribe_audio(audio_file):
             tmp_file.write(audio_file.read())
             tmp_path = tmp_file.name
         with open(tmp_path, "rb") as audio_fd:
-            transcription = client_whisper.audio.transcriptions.create(
-                model=WHISPER_MODEL, file=audio_fd, language="ru"
-            )
+            transcription = client_whisper.audio.transcriptions.create(model=WHISPER_MODEL, file=audio_fd, language="ru")
         os.unlink(tmp_path)
         return transcription.text
     except Exception as e:
@@ -94,9 +92,7 @@ def save_message_to_db(role, content, author, attachments=None):
     db.collection("messages").add(doc)
 
 def get_messages_from_db(limit=50):
-    docs = db.collection("messages").order_by(
-        "timestamp", direction=firestore.Query.DESCENDING
-    ).limit(limit).stream()
+    docs = db.collection("messages").order_by("timestamp", direction=firestore.Query.DESCENDING).limit(limit).stream()
     messages = []
     for doc in docs:
         data = doc.to_dict()
@@ -108,16 +104,17 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_role = None
 
-# --- ЭКРАН ВХОДА ---
+# ========== ЭКРАН ВХОДА ==========
 if not st.session_state.logged_in:
     st.set_page_config(page_title="Вход", page_icon="🔐", layout="centered")
-    st.image("https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&q=80", 
-             use_container_width=True)
+    
+    st.image("https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&q=80", use_container_width=True)
     st.title("Чат для друзей")
     st.caption("Введите пинкод")
     st.markdown("---")
     
     pin = st.text_input("Пинкод:", type="password", placeholder="Введите 4 цифры")
+    
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         login_button = st.button("🔓 Войти", use_container_width=True, type="primary")
@@ -129,9 +126,10 @@ if not st.session_state.logged_in:
             st.rerun()
         else:
             st.error("❌ Неверный пинкод")
-    st.stop()
+    
+    st.stop()  # ВАЖНО: останавливаем выполнение здесь
 
-# --- ОСНОВНОЙ ИНТЕРФЕЙС ---
+# ========== ОСНОВНОЙ ИНТЕРФЕЙС (только после входа) ==========
 st.set_page_config(page_title="Чат для друзей", page_icon="💬", layout="wide")
 user_role = st.session_state.user_role
 is_admin = (user_role == "Николай")
@@ -141,16 +139,21 @@ with st.sidebar:
     st.header(f"👤 {user_role}")
     if is_admin:
         st.markdown("🔑 **Администратор**")
+    
     st.image("https://cdn-icons-png.flaticon.com/512/2645/2645827.png", width=100)
     st.divider()
+    
     st.markdown("### 📤 Загрузка медиа")
     st.info("🖼️ Фото, 🎥 Видео, 🎤 Аудио")
     st.divider()
+    
     if st.button("🚪 Выйти", use_container_width=True):
         st.session_state.logged_in = False
         st.session_state.user_role = None
         st.rerun()
+    
     st.divider()
+    
     if is_admin and st.button("🧹 Очистить всю историю", use_container_width=True):
         docs = db.collection("messages").stream()
         for doc in docs:
@@ -172,11 +175,11 @@ for msg in messages:
                 elif att["type"] == "audio":
                     st.audio(att["data"])
                     if "transcription" in att:
-                        st.caption(f"🎤 {att['transcription']}")
+                        st.caption(f" {att['transcription']}")
         
         if msg.get("content"):
             if msg["role"] == "user":
-                st.caption(f"✍️ {msg['author']}")
+                st.caption(f"️ {msg['author']}")
             st.markdown(msg["content"])
 
 # Поле ввода
@@ -202,30 +205,16 @@ def process_and_respond(user_text, attachments=None):
             content_parts = [{"type": "text", "text": m.get("content", "")}]
             for att in m["attachments"]:
                 if att["type"] == "image" and "base64" in att:
-                    content_parts.append({
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{att['base64']}"}
-                    })
+                    content_parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{att['base64']}"}})
             messages_for_api.append({"role": m["role"], "content": content_parts})
         else:
-            messages_for_api.append({
-                "role": m["role"],
-                "content": m.get("content", "")
-            })
+            messages_for_api.append({"role": m["role"], "content": m.get("content", "")})
 
-    has_images = any(
-        "attachments" in m and any(a["type"] == "image" for a in m.get("attachments", []))
-        for m in recent_msgs[-3:]
-    )
-    model_to_use = VISION_MODEL if has_images else TEXT_MODEL
+    model_to_use = VISION_MODEL if any("attachments" in m and any(a["type"]=="image" for a in m.get("attachments",[])) for m in recent_msgs[-3:]) else TEXT_MODEL
     
     try:
         stream = client_qwen.chat.completions.create(
-            model=model_to_use,
-            messages=messages_for_api,
-            stream=True,
-            temperature=0.7,
-            max_tokens=2000
+            model=model_to_use, messages=messages_for_api, stream=True, temperature=0.7, max_tokens=2000
         )
         full_response = ""
         with st.chat_message("assistant"):
@@ -262,7 +251,7 @@ if uploaded_files:
         elif file_type == 'audio':
             with st.spinner("🎤 Расшифровываю аудио..."):
                 trans = transcribe_audio(uploaded_file)
-            full_text += f"[Аудио: {uploaded_file.name}]\n🎤 {trans} "
+            full_text += f"[Аудио: {uploaded_file.name}]\n {trans} "
             attachments.append({"type": "audio", "data": tmp_path, "transcription": trans})
         os.unlink(tmp_path)
     
