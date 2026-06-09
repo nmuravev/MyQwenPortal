@@ -42,7 +42,7 @@ PINS = json.loads(st.secrets.get("PINS", "{}"))
 
 GREETINGS = {
     "Николай": "Привет! На связи.",
-    "Малыха": "Малыха, о чём сегодня споём, родная? 🎤🕊️"
+    "Малыха": "Малыха, о чём сегодня споём, родная? 🎤️"
 }
 
 # ========== СКРЫТЫЕ КОНТЕКСТЫ ==========
@@ -82,7 +82,6 @@ def transcribe_audio(audio_file):
         return f"❌ Ошибка расшифровки: {str(e)}"
 
 def save_message_to_db(role, content, author, has_image=False, has_video=False, has_audio=False, image_base64=None, audio_transcription=None):
-    """Сохраняет сообщение в Firestore (упрощённая версия)"""
     doc = {
         "role": role,
         "content": content,
@@ -93,7 +92,6 @@ def save_message_to_db(role, content, author, has_image=False, has_video=False, 
         "has_audio": has_audio,
     }
     
-    # Добавляем только простые типы данных
     if image_base64:
         doc["image_base64"] = image_base64
     if audio_transcription:
@@ -114,13 +112,12 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.user_role = None
 
-# ========== ЭКРАН ВХОДА ==========
+# ========== ЭКРАН ВХОДА (БЕЗ КАРТИНКИ) ==========
 if not st.session_state.logged_in:
     st.set_page_config(page_title="Вход", page_icon="🔐", layout="centered")
     
-    st.image("https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=800&q=80", use_container_width=True)
-    st.title("Чат для друзей")
-    st.caption("Введите пинкод")
+    st.title("🔐 Чат для друзей")
+    st.caption("Введите пинкод для входа")
     st.markdown("---")
     
     pin = st.text_input("Пинкод:", type="password", placeholder="Введите 4 цифры")
@@ -150,11 +147,10 @@ with st.sidebar:
     if is_admin:
         st.markdown("🔑 **Администратор**")
     
-    st.image("https://cdn-icons-png.flaticon.com/512/2645/2645827.png", width=100)
     st.divider()
     
     st.markdown("### 📤 Загрузка медиа")
-    st.info("🖼️ Фото, 🎥 Видео,  Аудио")
+    st.info("🖼️ Фото, 🎥 Видео, 🎤 Аудио")
     st.divider()
     
     if st.button("🚪 Выйти", use_container_width=True):
@@ -180,7 +176,7 @@ for msg in messages:
         if msg.get("has_image") and msg.get("image_base64"):
             try:
                 img_data = base64.b64decode(msg["image_base64"])
-                st.image(img_data, use_container_width=True)
+                st.image(img_data, width='stretch')
             except:
                 st.caption("🖼️ Изображение")
         
@@ -192,7 +188,7 @@ for msg in messages:
         if msg.get("has_audio"):
             st.caption("🎤 Аудио загружено")
             if msg.get("audio_transcription"):
-                st.caption(f"📝 {msg['audio_transcription']}")
+                st.caption(f" {msg['audio_transcription']}")
         
         # Показываем текст
         if msg.get("content"):
@@ -212,7 +208,6 @@ uploaded_files = st.sidebar.file_uploader(
 
 # Обработка отправки
 def process_and_respond(user_text, has_image=False, has_video=False, has_audio=False, image_base64=None, audio_transcription=None):
-    """Сохраняет сообщение пользователя и генерирует ответ ИИ"""
     save_message_to_db("user", user_text, user_role, has_image, has_video, has_audio, image_base64, audio_transcription)
     
     system_prompt = CONTEXTS[user_role]
@@ -222,7 +217,6 @@ def process_and_respond(user_text, has_image=False, has_video=False, has_audio=F
     for m in recent_msgs:
         content = m.get("content", "")
         
-        # Добавляем информацию о медиа в текст
         if m.get("has_image"):
             content += " [Пользователь загрузил изображение]"
         if m.get("has_video"):
@@ -277,7 +271,7 @@ if uploaded_files:
             full_text += f"[Видео: {uploaded_file.name}] "
             has_video = True
         elif file_type == 'audio':
-            with st.spinner("🎤 Расшифровываю аудио..."):
+            with st.spinner(" Расшифровываю аудио..."):
                 audio_trans = transcribe_audio(uploaded_file)
             full_text += f"[Аудио: {uploaded_file.name}]\n{audio_trans} "
             has_audio = True
