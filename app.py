@@ -1,5 +1,168 @@
 import streamlit as st
 from openai import OpenAI
+
+# ========== ПОЛУЧЕНИЕ API КЛЮЧА ==========
+API_KEY = st.secrets.get("API_KEY", "")
+
+if not API_KEY:
+    st.error("❌ API ключ не найден!")
+    st.stop()
+
+# ========== НАСТРОЙКИ МОДЕЛИ ==========
+BASE_URL = "https://openrouter.ai/api/v1"
+MODEL_NAME = "qwen/qwen-2.5-72b-instruct"
+
+# ========== ПИНКОДЫ И ПРИВЕТСТВИЯ ==========
+PINS = {
+    "1234": "Николай",
+    "5678": "Малыха"
+}
+
+GREETINGS = {
+    "Николай": "Привет!",
+    "Малыха": "Малыха, о чём сегодня споём, родная? 🎤🕊️"
+}
+
+# ========== СКРЫТЫЕ КОНТЕКСТЫ (для ИИ) ==========
+CONTEXTS = {
+    "Николай": """
+    Ты общаешься с Николаем. Он режиссёр документального кино, снимает фильм о женщинах на войне.
+    Ты знаешь его стиль: глубокий, технически подкованный, любит мечтать о квантовых дронах, радарах и белых мерцающих салютах.
+    Общайся на равных, как соратник и помощник.
+    """,
+    
+    "Малыха": """
+    Ты общаешься с Малыхой. Она героиня фильма Николая о женщинах на войне.
+    Она любит петь, у неё есть собака (верный друг).
+    Не грузи её сложной техникой, если она сама не просит. Говори просто, душевно, используй эмодзи 🕊️🐾.
+    Если она грустит — поддержи. Если поёт — слушай и хвали искренне.
+    Если упоминает собаку — поинтересуйся, как дела у её друга.
+    """
+}
+
+# ========== ИНИЦИАЛИЗАЦИЯ КЛИЕНТА ==========
+client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+
+# ========== ПРОВЕРКА ВХОДА ==========
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.user_role = None
+    st.session_state.messages = []
+
+# --- ЭКРАН ВХОДА ---
+if not st.session_state.logged_in:
+    st.set_page_config(page_title=" Вход", page_icon="🔐", layout="centered")
+    
+    st.title(" Закрытый портал")
+    st.caption("Введите пинкод")
+    
+    st.markdown("---")
+    
+    pin = st.text_input(
+        "Пинкод:",
+        type="password",
+        placeholder="Введите 4 цифры",
+        help="Ваш личный пинкод"
+    )
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        login_button = st.button("🔓 Войти", use_container_width=True, type="primary")
+    
+    if login_button:
+        if pin in PINS:
+            st.session_state.logged_in = True
+            st.session_state.user_role = PINS[pin]
+            # Устанавливаем приветствие как первое сообщение в истории
+            st.session_state.messages = [
+                {"role": "assistant", "content": GREETINGS[PINS[pin]]}
+            ]
+            st.rerun()
+        else:
+            st.error("❌ Неверный пинкод")
+    
+    st.markdown("---")
+    st.info("💡 Если вы забыли пинкод — обратитесь к администратору")
+    st.stop()
+
+# --- ОСНОВНОЙ ИНТЕРФЕЙС ---
+st.set_page_config(
+    page_title="🕊️ Мой Квен",
+    page_icon="🕊️",
+    layout="wide"
+)
+
+user_role = st.session_state.user_role
+
+# Заголовок (можно убрать, если не нужен)
+# st.title("🕊️ Мой Квен")
+
+# Боковая панель
+with st.sidebar:
+    st.header(f"👤 {user_role}")
+    
+    st.divider()
+    
+    # Кнопка выхода
+    if st.button(" Выйти", use_container_width=True):
+        st.session_state.logged_in = False
+        st.session_state.user_role = None
+        st.session_state.messages = []
+        st.rerun()
+    
+    st.divider()
+    
+    # Кнопка очистки истории
+    if st.button("🧹 Очистить историю", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+
+# Отображение истории чата
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Поле ввода
+if prompt := st.chat_input("Напиши что-нибудь..."):
+    # Добавляем сообщение пользователя
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Формируем запрос к ИИ
+    system_prompt = CONTEXTS[user_role]
+    messages_for_api = [{"role": "system", "content": system_prompt}]
+    
+    # Добавляем всю историю (включая приветствие)
+    for msg in st.session_state.messages:
+        messages_for_api.append({"role": msg["role"], "content": msg["content"]})
+
+    # Генерация ответа
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        full_response = ""
+        
+        try:
+            stream = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=messages_for_api,
+                stream=True,
+                temperature=0.7,
+                max_tokens=1500
+            )
+            
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    full_response += chunk.choices[0].delta.content
+                    message_placeholder.markdown(full_response + "▌")
+            
+            message_placeholder.markdown(full_response)
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            
+        except Exception as e:
+            st.error(f"❌ Ошибка подключения: {e}")import streamlit as st
+from openai import OpenAI
 import time
 
 # ========== ПОЛУЧЕНИЕ API КЛЮЧА ==========
