@@ -38,10 +38,7 @@ TEXT_MODEL = "qwen/qwen-2.5-72b-instruct"
 WHISPER_MODEL = "whisper-1"
 
 # ========== ПИНКОДЫ И ПРИВЕТСТВИЯ ==========
-PINS = {
-    "7391": "Николай",
-    "4826": "Малыха"
-}
+PINS = json.loads(st.secrets.get("PINS", "{}"))
 
 GREETINGS = {
     "Николай": "Привет! На связи.",
